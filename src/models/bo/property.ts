@@ -1,14 +1,8 @@
 import { Table, Column, Model, AutoIncrement, PrimaryKey, AllowNull, DataType, Default, BelongsTo, ForeignKey } from 'sequelize-typescript'
 import { User, Interface, Module, Repository } from '../'
 
-export enum SCOPES { REQUEST = 'request', RESPONSE = 'response' }
+export enum SCOPES { REQUEST = 'request', RESPONSE = 'response', SCRIPT = 'script' }
 export enum TYPES { STRING = 'String', NUMBER = 'Number', BOOLEAN = 'Boolean', OBJECT = 'Object', ARRAY = 'Array', FUNCTION = 'Function', REGEXP = 'RegExp', Null = 'Null' }
-
-export enum REQUEST_PARAMS_TYPE {
-  HEADERS = 1,
-  QUERY_PARAMS = 2,
-  BODY_PARAMS = 3,
-}
 
 @Table({ paranoid: true, freezeTableName: false, timestamps: true })
 export default class Property extends Model<Property> {
@@ -41,9 +35,9 @@ export default class Property extends Model<Property> {
 
   @AllowNull(false)
   @Default(2)
-  @Column
+  @Column({ type: DataType.INTEGER }) // for better extension
   /** request params type (position) */
-  pos: number
+  pos: POS_TYPE
 
   @AllowNull(false)
   @Column(DataType.STRING(256))
@@ -100,4 +94,16 @@ export default class Property extends Model<Property> {
   /** 是否为必填选项 */
   required: boolean
 
+}
+
+
+/**
+ * 参数类型
+ */
+export enum POS_TYPE {
+  QUERY = 2,
+  HEADER = 1,
+  BODY = 3,
+  PRE_REQUEST_SCRIPT = 4,
+  TEST = 5,
 }

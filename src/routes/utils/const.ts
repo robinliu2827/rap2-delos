@@ -17,8 +17,27 @@ export enum DATE_CONST {
   YEAR = 1000 * 60 * 60 * 24 * 365,
 }
 
+
 export enum ENTITY_TYPE {
-  REPOSITORY,
-  INTERFACE,
-  PARAMETER,
+  REPOSITORY = 0,
+  INTERFACE = 1,
+  PARAMETER = 2,
+}
+
+export enum THEME_TEMPLATE_KEY {
+  RED = 'RED', // DEFAULT
+  BLACK = 'BLACK',
+  BLUE = 'BLUE',
+  GREEN = 'GREEN',
+  PINK = 'PINK',
+  ORANGE = 'ORANGE',
+  PURPLE = 'PURPLE',
+  CYAN = 'CYAN',
+}
+
+export enum BODY_OPTION {
+  FORM_DATA = 'FORM_DATA',
+  FORM_URLENCODED = 'FORM_URLENCODED',
+  RAW = 'RAW',
+  BINARY = 'BINARY',
 }

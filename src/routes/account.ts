@@ -10,6 +10,8 @@ import * as md5 from 'md5'
 import { isLoggedIn } from './base'
 import { AccessUtils } from './utils/access'
 import { COMMON_ERROR_RES } from './utils/const'
+import * as moment from 'moment'
+import RedisService, { CACHE_KEY, DEFAULT_CACHE_VAL } from '../service/redis'
 
 
 
@@ -48,26 +50,26 @@ router.get('/account/list', isLoggedIn, async (ctx) => {
   let { name } = ctx.query
   if (name) {
     Object.assign(where, {
-      [Op.or]: [{
-        fullname: {
-          [Op.like]: `%${name}%`
-        },
-      }],
+      [Op.or]: [
+        { fullname: { [Op.like]: `%${name}%` } },
+        { email: name },
+      ],
     })
   }
   let options = { where }
   let total = await User.count(options)
-  let pagination = new Pagination(total, ctx.query.cursor || 1, ctx.query.limit || 10)
+  let limit = Math.min(ctx.query.limit ?? 10, 100)
+  let pagination = new Pagination(total, ctx.query.cursor || 1, limit)
   ctx.body = {
-    data: await User.findAll(Object.assign(options, {
-      attributes: ['id', 'fullname', 'email'],
-      offset: pagination.start,
-      limit: pagination.limit,
-      order: [
-        ['id', 'DESC'],
-      ],
-    })),
-    pagination: pagination,
+    data: await User.findAll({
+      ...options, ...{
+        attributes: ['id', 'fullname', 'email'],
+        offset: pagination.start,
+        limit: pagination.limit,
+        order: [['id', 'DESC']],
+      }
+    }),
+    pagination: pagination
   }
 })
 
@@ -213,6 +215,37 @@ router.post('/account/setting', async (ctx) => {
   }
 })
 
+router.post('/account/fetchUserSettings', isLoggedIn, async (ctx) => {
+  const keys: CACHE_KEY[] = ctx.request.body.keys
+  if (!keys || !keys.length) {
+    ctx.body = {
+      isOk: false,
+      errMsg: 'error'
+    }
+    return
+  }
+
+  const data: { [key: string]: string } = {}
+
+  for (const key of keys) {
+    data[key] = await RedisService.getCache(key, ctx.session.id) || DEFAULT_CACHE_VAL[key]
+  }
+
+  ctx.body = {
+    isOk: true,
+    data,
+  }
+})
+
+router.post('/account/updateUserSetting/:key', isLoggedIn, async (ctx) => {
+  const key: CACHE_KEY = ctx.params.key as CACHE_KEY
+  const value: string = ctx.request.body.value
+  await RedisService.setCache(key, value, ctx.session.id, 10 * 365 * 24 * 60 * 60)
+  ctx.body = {
+    isOk: true,
+  }
+})
+
 // TODO 2.3 账户通知
 let NOTIFICATION_EXCLUDE_ATTRIBUTES: any = []
 router.get('/account/notification/list', async (ctx) => {
@@ -339,6 +372,104 @@ router.post('/account/reset', async (ctx) => {
       data: {
         isOk: true,
       }
+    }
+  }
+})
+
+router.post('/account/findpwd', async (ctx) => {
+  let { email, captcha } = ctx.request.body
+  let user, errMsg
+  if (process.env.TEST_MODE !== 'true' &&
+    (!captcha || !ctx.session.captcha || captcha.trim().toLowerCase() !== ctx.session.captcha.toLowerCase())) {
+    errMsg = '错误的验证码'
+  } else {
+    user = await User.findOne({
+      attributes: QueryInclude.User.attributes,
+      where: { email },
+    })
+    if (user) {
+      // 截取ID最后两位*日期字符串 作为返回链接的过期校验
+      let idstr = user.id.toString()
+      let timeCode = (parseInt(moment().add(60, 'minutes').format('YYMMDDHHmmss')) * parseInt(idstr.substr(idstr.length - 2))).toString()
+      let token = md5(user.email + user.id + timeCode + String(Math.floor(Math.random() * 99999999)))
+      await RedisService.setCache(CACHE_KEY.PWDRESETTOKEN_GET, token, user.id)
+      let link = `${ctx.headers.origin}/account/resetpwd?code=${timeCode}&email=${email}&token=${token}`
+      let content = MailService.mailFindpwdTemp.replace(/{=EMAIL=}/g, user.email).replace(/{=URL=}/g, link).replace(/{=NAME=}/g, user.fullname)
+      MailService.send(email, "RAP2：重新设置您的密码", content)
+    } else {
+      errMsg = '账号不存在'
+    }
+  }
+  ctx.body = {
+    data: !errMsg ? { isOk: true } : { isOk: false, errMsg }
+  }
+})
+
+router.post('/account/findpwd/reset', async (ctx) => {
+  let { code, email, captcha, token, password } = ctx.request.body
+  let user, errMsg
+  if (!code || !email || !captcha || !token || !password) {
+    errMsg = '参数错误'
+  }
+  else if (password.length < 6) {
+    errMsg = '密码长度过短'
+  }
+  else if (process.env.TEST_MODE !== 'true' &&
+    (!captcha || !ctx.session.captcha || captcha.trim().toLowerCase() !== ctx.session.captcha.toLowerCase())) {
+    errMsg = '错误的验证码'
+  } else {
+    user = await User.findOne({
+      attributes: QueryInclude.User.attributes,
+      where: { email },
+    })
+    if (!user) {
+      errMsg = '您的邮箱没被注册过，或用户已被锁定'
+    }
+    else {
+      const tokenCache = await RedisService.getCache(CACHE_KEY.PWDRESETTOKEN_GET, user.id)
+      if (!tokenCache || tokenCache !== token) {
+        errMsg = "参数错误"
+      }
+      else {
+        RedisService.delCache(CACHE_KEY.PWDRESETTOKEN_GET, user.id)
+        let idstr = user.id.toString()
+        let timespan = parseInt(code) / parseInt(idstr.substr(idstr.length - 2))
+        if (timespan < parseInt(moment().format('YYMMDDHHmmss'))) {
+          errMsg = "此链接已超时，请重新发送重置密码邮件"
+        }
+        else {
+          user.password = md5(md5(password))
+          await user.save()
+        }
+      }
+    }
+  }
+  ctx.body = {
+    data: !errMsg ? { isOk: true } : { isOk: false, errMsg }
+  }
+})
+
+router.post('/account/updateAccount', async ctx => {
+  try {
+    const { password, fullname } = ctx.request.body as { password: string, fullname: string }
+    if (!ctx.session?.id) {
+      throw new Error('需先登录才能操作')
+    }
+    const user = await User.findByPk(ctx.session.id)
+    if (password) {
+      user.password = md5(md5(password))
+    }
+    if (fullname) {
+      user.fullname = fullname
+    }
+    await user.save()
+    ctx.body = {
+      isOk: true
+    }
+  } catch (ex) {
+    ctx.body = {
+      isOk: false,
+      errMsg: ex.message,
     }
   }
 })

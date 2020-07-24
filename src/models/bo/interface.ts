@@ -2,10 +2,16 @@ import { Table, Column, Model, HasMany, AutoIncrement, PrimaryKey, AllowNull, Da
 import { User, Module, Repository, Property } from '../'
 import RedisService, { CACHE_KEY } from '../../service/redis'
 import * as Sequelize from 'sequelize'
+import { BODY_OPTION } from '../../routes/utils/const'
 
 const Op = Sequelize.Op
 
 enum methods { GET = 'GET', POST = 'POST', PUT = 'PUT', DELETE = 'DELETE' }
+
+export enum MoveOp {
+  MOVE = 1,
+  COPY = 2
+}
 
 @Table({ paranoid: true, freezeTableName: false, timestamps: true })
 export default class Interface extends Model<Interface> {
@@ -62,6 +68,9 @@ export default class Interface extends Model<Interface> {
   @AllowNull(false)
   @Column({ comment: 'API method' })
   method: string
+
+  @Column({ type: DataType.STRING(255) })
+  bodyOption?: BODY_OPTION
 
   @Column(DataType.TEXT)
   description: string
